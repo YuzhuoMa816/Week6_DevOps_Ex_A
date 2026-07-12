@@ -1,0 +1,12 @@
+# Folder view configuration files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+
+.terraform/
+*.tfvars
+
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
