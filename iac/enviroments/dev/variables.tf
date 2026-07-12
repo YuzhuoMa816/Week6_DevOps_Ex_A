@@ -35,4 +35,14 @@ variable "private_subnet_cidrs" {
   default     = ["10.0.3.0/24", "10.0.4.0/24"]
 }
 
+variable "db_port" {
+  description = "The port for the RDS instance."
+  type        = number
+  default     = 5432
+}
 
+variable "app_port" {
+  description = "The port for the application."
+  type        = number
+  default     = 8080
+}
