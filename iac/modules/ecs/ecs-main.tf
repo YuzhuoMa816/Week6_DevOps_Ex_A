@@ -43,6 +43,12 @@ resource "aws_ecs_service" "ecs_service" {
     container_name   = var.container_name
     container_port   = var.app_port
   }
+  lifecycle {
+    ignore_changes = [
+      task_definition,
+      desired_count
+    ]
+  }
 
   depends_on = [
     aws_iam_role_policy_attachment.task_execution_role_policy,
