@@ -49,3 +49,13 @@ variable "rds_security_group_id" {
   description = "The ID of the security group for the RDS instance."
   type        = string
 }
+
+variable "db_engine" {
+  description = "The database engine for the RDS instance."
+  type        = string
+}
+
+variable "db_engine_version" {
+  description = "The version of the database engine."
+  type        = string
+}

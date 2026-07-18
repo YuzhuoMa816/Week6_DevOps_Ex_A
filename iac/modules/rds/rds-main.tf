@@ -24,8 +24,8 @@ resource "aws_db_instance" "this" {
   allocated_storage = var.allocated_storage
   storage_type      = var.storage_type
 
-  engine         = "postgres"
-  engine_version = "16.1"
+  engine         = var.db_engine
+  engine_version = var.db_engine_version
   instance_class = var.db_instance_class
 
   db_name  = var.db_name

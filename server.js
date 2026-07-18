@@ -14,6 +14,7 @@ const pool = new Pool({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   connectionTimeoutMillis: 5000,
+  ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
 });
 
 app.get("/health", (req, res) => res.status(200).json({ status: "ok" }));
@@ -29,7 +30,11 @@ app.get("/db-health", async (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.status(200).send(`Hello from Lab 1 — ECS + RDS. Build: ${process.env.BUILD_TAG || "unknown"}`);
+  res
+    .status(200)
+    .send(
+      `Hello from Lab 1 — ECS + RDS. Build: ${process.env.BUILD_TAG || "unknown"}`,
+    );
 });
 
 app.listen(PORT, () => console.log(`Listening on ${PORT}`));
