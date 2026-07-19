@@ -33,7 +33,7 @@ app.get("/", (req, res) => {
   res
     .status(200)
     .send(
-      `Hello from Lab 1 — ECS + RDS. Build: ${process.env.BUILD_TAG || "unknown"}`,
+      `Hello this is test of code change — ECS + RDS. Build: ${process.env.BUILD_TAG || "unknown"}`,
     );
 });
 
