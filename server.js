@@ -17,8 +17,6 @@ const pool = new Pool({
   ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
 });
 
-const AWS_SECRET_ACCESS_KEY = "this is the test key";
-
 app.get("/health", (req, res) => res.status(200).json({ status: "ok" }));
 
 // Proves the ECS task can actually reach RDS — not just that the app is up.
