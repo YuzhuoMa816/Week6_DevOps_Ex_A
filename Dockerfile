@@ -8,7 +8,7 @@ RUN apk upgrade --no-cache
 COPY package*.json ./
 
 
-RUN npm ci --omit=dev --no-cache
+RUN npm ci --omit=dev --no-cache --audit --fund=false
 
 
 # ---------- Runtime stage ----------
