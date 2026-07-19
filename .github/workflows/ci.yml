@@ -151,13 +151,12 @@ jobs:
 
       - name: Smoke test live service
         run: |
-          BASE_URL="http://${{ vars.ALB_DNS_NAME }}"
 
           echo "Testing /health"
-          curl -fsS "$BASE_URL/health"
+          curl -fsS "http://${{ vars.ALB_DNS_NAME }}/health"
 
           echo "Testing /db-health"
-          curl -fsS "$BASE_URL/db-health"
+          curl -fsS "http://${{ vars.ALB_DNS_NAME }}/db-health"
 
       - name: Print ECS diagnostics on failure
         if: failure()
