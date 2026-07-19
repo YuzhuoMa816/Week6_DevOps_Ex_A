@@ -153,10 +153,10 @@ jobs:
         run: |
 
           echo "Testing /health"
-          curl -fsS "http://${{ vars.ALB_DNS_NAME }}/health"
+          curl -fsS "${{ vars.APP_BASE_URL }}/health"
 
           echo "Testing /db-health"
-          curl -fsS "http://${{ vars.ALB_DNS_NAME }}/db-health"
+          curl -fsS "${{ vars.APP_BASE_URL }}/db-health"
 
       - name: Print ECS diagnostics on failure
         if: failure()
