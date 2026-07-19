@@ -33,6 +33,13 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.WEEK6_EXERCISE_TOKEN }}
 
+      - name: SonarCloud Quality Gate
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        with:
+          pollingTimeoutSec: 600
+        env:
+          SONAR_TOKEN: ${{ secrets.WEEK6_EXERCISE_TOKEN }}
+
       - name: Lint Dockerfile with Hadolint
         run: |
           docker run --rm \
