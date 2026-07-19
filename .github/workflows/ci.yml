@@ -27,12 +27,12 @@ jobs:
 
       - name: Debug Sonar token access
         env:
-          SONAR_TOKEN: ${{ secrets.WEEK6_EXERCISE_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: curl -i -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/components/show?component=YuzhuoMa816_Week6_DevOps_Ex_A"
 
       - name: Debug Sonar Quality Gate access
         env:
-          SONAR_TOKEN: ${{ secrets.WEEK6_EXERCISE_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           curl -i -u "${SONAR_TOKEN}:" \
           "https://sonarcloud.io/api/qualitygates/project_status?projectKey=YuzhuoMa816_Week6_DevOps_Ex_A"
@@ -42,7 +42,7 @@ jobs:
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
         env:
-          SONAR_TOKEN: ${{ secrets.WEEK6_EXERCISE_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Lint Dockerfile with Hadolint
         run: |
