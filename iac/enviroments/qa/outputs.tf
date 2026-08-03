@@ -30,7 +30,6 @@ output "db_password_secret_arn" {
   value = module.rds.db_password_secret_arn
 }
 
-
 output "ecs_cluster_name" {
   value = module.ecs.cluster_name
 }
