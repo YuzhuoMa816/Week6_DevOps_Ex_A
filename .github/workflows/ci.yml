@@ -97,8 +97,11 @@ jobs:
 
       - name: Login to ECR
         run: |
-          ECR_REGISTRY="${{ vars.ECR_REPOSITORY_URL }}"
-          ECR_REGISTRY="${ECR_REGISTRY%%/*}"
+          set -euo pipefail
+
+          ECR_REPOSITORY_URL="$(printf '%s' '${{ vars.ECR_REPOSITORY_URL }}' | tr -d '\r\n' | xargs)"
+          ECR_REGISTRY="${ECR_REPOSITORY_URL%%/*}"
+
 
           aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
             | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
@@ -106,8 +109,14 @@ jobs:
       - name: Push image to ECR
         id: push-image
         run: |
+          set -euo pipefail
           IMAGE_TAG="${{ github.sha }}"
-          IMAGE_URI="${{ vars.ECR_REPOSITORY_URL }}:${IMAGE_TAG}"
+          ECR_REPOSITORY_URL="$(printf '%s' '${{ vars.ECR_REPOSITORY_URL }}' | tr -d '\r\n' | xargs)"
+
+          IMAGE_URI="${ECR_REPOSITORY_URL}:${IMAGE_TAG}"
+
+          echo "Pushing image: ${IMAGE_URI}"
+
 
           docker tag "week6-devops-prac:${IMAGE_TAG}" "${IMAGE_URI}"
           docker push "${IMAGE_URI}"
@@ -115,6 +124,7 @@ jobs:
           echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
   deploy:
+    name: Deploy to ECS
     runs-on: ubuntu-latest
     needs: build-scan-push
     if: github.event_name == 'push' && (github.ref_name == 'dev' || github.ref_name == 'qa' || github.ref_name == 'prod')
@@ -133,14 +143,44 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      - name: Export current ECS task definition
+        run: |
+          set -euo pipefail
+
+          CURRENT_TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
+            --services "${{ vars.ECS_SERVICE_NAME }}" \
+            --region "${{ vars.AWS_REGION }}" \
+            --query "services[0].taskDefinition" \
+            --output text)
+
+          echo "Current task definition: ${CURRENT_TASK_DEF_ARN}"
+
+          aws ecs describe-task-definition \
+            --task-definition "${CURRENT_TASK_DEF_ARN}" \
+            --region "${{ vars.AWS_REGION }}" \
+            --query "taskDefinition" \
+            --output json > task-definition-full.json
+
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' task-definition-full.json > task-definition.json
+
       - name: Render ECS task definition template
         id: render-task-definition
         uses: aws-actions/amazon-ecs-render-task-definition@c804dfbdd57f713b6c079302a4c01db7017a36fc
         with:
-          task-definition: ${{vars.TASK_DEFINITION_FILE}}
+          task-definition: task-definition.json
           container-name: ${{vars.ECS_CONTAINER_NAME}}
           image: ${{needs.build-scan-push.outputs.image_uri}}
-          environment-variables: BUILD_TAG=${{ github.sha }}
+          environment-variables: |
+            BUILD_TAG=${{ github.sha }}
 
       - name: Deploy to Amazon ECS service
         uses: aws-actions/amazon-ecs-deploy-task-definition@df9643053eda01f169e64a0e60233aacca83799a
