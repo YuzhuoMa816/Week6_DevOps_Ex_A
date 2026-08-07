@@ -22,7 +22,7 @@ resource "aws_lb_target_group" "this" {
   port        = var.app_port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
-  target_type = "ip" # for EKS
+  target_type = "ip" # for ECS
 
 
 
