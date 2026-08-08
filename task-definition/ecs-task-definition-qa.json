@@ -2,7 +2,7 @@
   "containerDefinitions": [
     {
       "name": "week6-devops-ex-a-container",
-      "image": "961244032557.dkr.ecr.ap-southeast-2.amazonaws.com/week6-devops-ex-a-dev-ecr-repo:dev-initial-amd64-v3",
+      "image": "961244032557.dkr.ecr.ap-southeast-2.amazonaws.com/week6-devops-ex-a-ecr-repo:dev-initial-shared",
       "cpu": 0,
       "portMappings": [
         {
@@ -15,7 +15,7 @@
       "environment": [
         {
           "name": "BUILD_TAG",
-          "value": "dev-initial-amd64-v3"
+          "value": "dev-initial-shared"
         },
         {
           "name": "DB_SSL",
@@ -39,7 +39,7 @@
         },
         {
           "name": "DB_HOST",
-          "value": "week6-devops-ex-a-dev-rds-instance.c7mcssis4shk.ap-southeast-2.rds.amazonaws.com"
+          "value": "week6-devops-ex-a-qa-rds-instance.c7mcssis4shk.ap-southeast-2.rds.amazonaws.com"
         }
       ],
       "mountPoints": [],
@@ -47,13 +47,13 @@
       "secrets": [
         {
           "name": "DB_PASSWORD",
-          "valueFrom": "arn:aws:secretsmanager:ap-southeast-2:961244032557:secret:week6-devops-ex-a/dev/db-password-1ya64p"
+          "valueFrom": "arn:aws:secretsmanager:ap-southeast-2:961244032557:secret:week6-devops-ex-a/qa/db-password-Fr9dCw"
         }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/week6-devops-ex-a-dev",
+          "awslogs-group": "/ecs/week6-devops-ex-a-qa",
           "awslogs-region": "ap-southeast-2",
           "awslogs-stream-prefix": "ecs"
         }
@@ -61,9 +61,9 @@
       "systemControls": []
     }
   ],
-  "family": "week6-devops-ex-a-dev-task",
-  "taskRoleArn": "arn:aws:iam::961244032557:role/week6-devops-ex-a-dev-ecs-task-role",
-  "executionRoleArn": "arn:aws:iam::961244032557:role/week6-devops-ex-a-dev-ecs-task-execution-role",
+  "family": "week6-devops-ex-a-qa-task",
+  "taskRoleArn": "arn:aws:iam::961244032557:role/week6-devops-ex-a-qa-ecs-task-role",
+  "executionRoleArn": "arn:aws:iam::961244032557:role/week6-devops-ex-a-qa-ecs-task-execution-role",
   "networkMode": "awsvpc",
   "volumes": [],
   "placementConstraints": [],

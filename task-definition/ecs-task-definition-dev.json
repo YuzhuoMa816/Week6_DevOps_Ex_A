@@ -1,0 +1,75 @@
+{
+  "containerDefinitions": [
+    {
+      "name": "week6-devops-ex-a-container",
+      "image": "961244032557.dkr.ecr.ap-southeast-2.amazonaws.com/week6-devops-ex-a-dev-ecr-repo:dev-initial-shared",
+      "cpu": 0,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "hostPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        {
+          "name": "BUILD_TAG",
+          "value": "dev-initial-shared"
+        },
+        {
+          "name": "DB_SSL",
+          "value": "true"
+        },
+        {
+          "name": "PORT",
+          "value": "8080"
+        },
+        {
+          "name": "DB_PORT",
+          "value": "5432"
+        },
+        {
+          "name": "DB_USER",
+          "value": "mydbuser"
+        },
+        {
+          "name": "DB_NAME",
+          "value": "mydatabase"
+        },
+        {
+          "name": "DB_HOST",
+          "value": "week6-devops-ex-a-dev-rds-instance.c7mcssis4shk.ap-southeast-2.rds.amazonaws.com"
+        }
+      ],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "secrets": [
+        {
+          "name": "DB_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:ap-southeast-2:961244032557:secret:week6-devops-ex-a/dev/db-password-1ya64p"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/week6-devops-ex-a-dev",
+          "awslogs-region": "ap-southeast-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "systemControls": []
+    }
+  ],
+  "family": "week6-devops-ex-a-dev-task",
+  "taskRoleArn": "arn:aws:iam::961244032557:role/week6-devops-ex-a-dev-ecs-task-role",
+  "executionRoleArn": "arn:aws:iam::961244032557:role/week6-devops-ex-a-dev-ecs-task-execution-role",
+  "networkMode": "awsvpc",
+  "volumes": [],
+  "placementConstraints": [],
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "512",
+  "memory": "1024"
+}

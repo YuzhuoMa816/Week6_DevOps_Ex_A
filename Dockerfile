@@ -28,14 +28,14 @@ RUN apk upgrade --no-cache \
               /root/.npm \
               /root/.cache \
 
-    && addgroup -S appgroup \
-    && adduser -S appuser -G appgroup \
-    && chown -R appuser:appgroup /server
+    && addgroup -g 10001 -S appgroup \
+    && adduser -u 10001 -S appuser -G appgroup \
+    && chown -R 10001:10001 /server
 
-COPY --from=builder --chown=appuser:appgroup /server/node_modules ./node_modules
-COPY --chown=appuser:appgroup server.js ./
+COPY --from=builder --chown=10001:10001 /server/node_modules ./node_modules
+COPY --chown=10001:10001 server.js ./
 
-USER appuser
+USER 10001:10001
 
 EXPOSE 8080
 
