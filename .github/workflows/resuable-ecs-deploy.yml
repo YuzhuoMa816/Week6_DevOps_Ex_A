@@ -1,0 +1,30 @@
+name: Reusable ECS Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment_name:
+        description: Target GitHub environment
+        required: true
+        type: string
+
+      image_uri:
+        description: Immutable image URI to deploy
+        required: true
+        type: string
+
+      build_tag:
+        description: Build or release identifier
+        required: true
+        type: string
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment_name }}
+    runs-on: ubuntu-24.04
+
+    environment:
+      name: ${{ inputs.environment_name }}
+
+    permissions:
+      id-token: write
+      contents: read
