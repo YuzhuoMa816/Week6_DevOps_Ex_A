@@ -124,9 +124,9 @@ jobs:
   # ============================================================
   # QA / PROD: PROMOTE EXISTING ARTIFACT
   # ============================================================
-
   promote-image:
     name: Promote existing image
+
     if: >
       github.event_name == 'pull_request' &&
       github.event.pull_request.merged == true &&
@@ -143,12 +143,15 @@ jobs:
       contents: read
 
     outputs:
-      image_uri: ${{ steps.verify.outputs.image_uri }}
-      artifact_digest: ${{ steps.source-image.outputs.digest }}
+      image_uri: ${{ steps.promote.outputs.image_uri }}
+      artifact_digest: ${{ steps.promote.outputs.artifact_digest }}
       target_sha: ${{ steps.promotion.outputs.target_sha }}
       target_environment: ${{ steps.promotion.outputs.target_branch }}
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
       - name: Configure AWS credentials for artifact promotion
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
         with:
@@ -174,124 +177,13 @@ jobs:
           echo "Source SHA: ${SOURCE_SHA}"
           echo "Target SHA: ${TARGET_SHA}"
 
-      - name: Resolve ECR repository
-        id: ecr
-        run: |
-          set -euo pipefail
-
-          ECR_REPOSITORY_URL="$(printf '%s' '${{ vars.ECR_REPOSITORY_URL }}' | tr -d '\r\n' | xargs)"
-          ECR_REPOSITORY_NAME="${ECR_REPOSITORY_URL#*/}"
-
-          echo "repository_url=${ECR_REPOSITORY_URL}" >> "$GITHUB_OUTPUT"
-          echo "repository_name=${ECR_REPOSITORY_NAME}" >> "$GITHUB_OUTPUT"
-
-          echo "Repository: ${ECR_REPOSITORY_NAME}"
-
-      - name: Find source image in ECR
-        id: source-image
-        run: |
-          set -euo pipefail
-
-          SOURCE_SHA="${{ steps.promotion.outputs.source_sha }}"
-          REPOSITORY="${{ steps.ecr.outputs.repository_name }}"
-
-          RESPONSE=$(aws ecr batch-get-image \
-            --repository-name "${REPOSITORY}" \
-            --image-ids imageTag="${SOURCE_SHA}" \
-            --output json)
-
-          MANIFEST=$(echo "${RESPONSE}" \
-            | jq -r '.images[0].imageManifest // empty')
-
-          DIGEST=$(echo "${RESPONSE}" \
-            | jq -r '.images[0].imageId.imageDigest // empty')
-
-          if [ -z "${MANIFEST}" ] || [ -z "${DIGEST}" ]; then
-            echo "ERROR: Source artifact ${SOURCE_SHA} does not exist in ECR."
-            exit 1
-          fi
-
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-
-          printf '%s' "${MANIFEST}" > image-manifest.json
-
-          echo "Found source artifact"
-          echo "Source SHA: ${SOURCE_SHA}"
-          echo "Digest: ${DIGEST}"
-
-      - name: Promote image tag
-        run: |
-          set -euo pipefail
-
-          TARGET_SHA="${{ steps.promotion.outputs.target_sha }}"
-          SOURCE_DIGEST="${{ steps.source-image.outputs.digest }}"
-          REPOSITORY="${{ steps.ecr.outputs.repository_name }}"
-
-          TARGET_RESPONSE=$(aws ecr batch-get-image \
-            --repository-name "${REPOSITORY}" \
-            --image-ids imageTag="${TARGET_SHA}" \
-            --output json)
-
-          EXISTING_TARGET_DIGEST=$(echo "${TARGET_RESPONSE}" \
-            | jq -r '.images[0].imageId.imageDigest // empty')
-
-          if [ -n "${EXISTING_TARGET_DIGEST}" ]; then
-
-            echo "Target tag ${TARGET_SHA} already exists."
-            echo "Existing digest: ${EXISTING_TARGET_DIGEST}"
-
-            if [ "${EXISTING_TARGET_DIGEST}" != "${SOURCE_DIGEST}" ]; then
-              echo "ERROR: Existing target tag points to a different artifact."
-              exit 1
-            fi
-
-            echo "Existing target tag already points to the correct artifact."
-
-          else
-
-            MANIFEST=$(cat image-manifest.json)
-
-            echo "Creating promotion tag ${TARGET_SHA}"
-
-            aws ecr put-image \
-              --repository-name "${REPOSITORY}" \
-              --image-tag "${TARGET_SHA}" \
-              --image-manifest "${MANIFEST}" \
-              > /dev/null
-
-          fi
-
-      - name: Verify promoted image digest
-        id: verify
-        run: |
-          set -euo pipefail
-
-          TARGET_SHA="${{ steps.promotion.outputs.target_sha }}"
-          SOURCE_DIGEST="${{ steps.source-image.outputs.digest }}"
-          REPOSITORY="${{ steps.ecr.outputs.repository_name }}"
-          ECR_REPOSITORY_URL="${{ steps.ecr.outputs.repository_url }}"
-
-          TARGET_DIGEST=$(aws ecr describe-images \
-            --repository-name "${REPOSITORY}" \
-            --image-ids imageTag="${TARGET_SHA}" \
-            --query 'imageDetails[0].imageDigest' \
-            --output text)
-
-          echo "Source digest: ${SOURCE_DIGEST}"
-          echo "Target digest: ${TARGET_DIGEST}"
-
-          if [ "${SOURCE_DIGEST}" != "${TARGET_DIGEST}" ]; then
-            echo "ERROR: Artifact digest changed during promotion."
-            exit 1
-          fi
-
-          IMAGE_URI="${ECR_REPOSITORY_URL}@${TARGET_DIGEST}"
-
-          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
-
-          echo "Artifact promotion verified successfully."
-          echo "Deployable image: ${IMAGE_URI}"
-
+      - name: Promote ECR artifact
+        id: promote
+        uses: ./.github/actions/promote-ecr-image
+        with:
+          ecr_repository_url: ${{ vars.ECR_REPOSITORY_URL }}
+          source_sha: ${{ steps.promotion.outputs.source_sha }}
+          target_sha: ${{ steps.promotion.outputs.target_sha }}
   # ============================================================
   # QA / PROD: DEPLOY PROMOTED ARTIFACT
   # ============================================================
