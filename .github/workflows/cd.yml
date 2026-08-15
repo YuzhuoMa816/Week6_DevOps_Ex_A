@@ -108,10 +108,13 @@ jobs:
   deploy-dev:
     name: Deploy image to DEV
     if: github.event_name == 'push' && github.ref_name == 'dev'
+    permissions:
+      id-token: write
+      contents: read
 
     needs: build-scan-push
 
-    uses: ./.github/workflows/resuable-ecs-deploy.yml
+    uses: ./.github/workflows/reusable-ecs-deploy.yml
 
     with:
       environment_name: dev
@@ -303,7 +306,7 @@ jobs:
       id-token: write
       contents: read
 
-    uses: ./.github/workflows/resuable-ecs-deploy.yml
+    uses: ./.github/workflows/reusable-ecs-deploy.yml
 
     with:
       environment_name: ${{ needs.promote-image.outputs.target_environment }}
