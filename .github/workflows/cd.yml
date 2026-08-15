@@ -108,93 +108,15 @@ jobs:
   deploy-dev:
     name: Deploy image to DEV
     if: github.event_name == 'push' && github.ref_name == 'dev'
-    runs-on: ubuntu-24.04
 
     needs: build-scan-push
-    environment: dev
 
-    permissions:
-      id-token: write
-      contents: read
+    uses: ./.github/workflows/resuable-ecs-deploy.yml
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-
-      - name: Configure AWS credentials for DEV deployment
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Export current ECS task definition
-        run: |
-          set -euo pipefail
-
-          CURRENT_TASK_DEF_ARN=$(aws ecs describe-services \
-            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
-            --services "${{ vars.ECS_SERVICE_NAME }}" \
-            --region "${{ vars.AWS_REGION }}" \
-            --query "services[0].taskDefinition" \
-            --output text)
-
-          echo "Current task definition: ${CURRENT_TASK_DEF_ARN}"
-
-          aws ecs describe-task-definition \
-            --task-definition "${CURRENT_TASK_DEF_ARN}" \
-            --region "${{ vars.AWS_REGION }}" \
-            --query "taskDefinition" \
-            --output json > task-definition-full.json
-
-          jq 'del(
-            .taskDefinitionArn,
-            .revision,
-            .status,
-            .requiresAttributes,
-            .compatibilities,
-            .registeredAt,
-            .registeredBy
-          )' task-definition-full.json > task-definition.json
-
-      - name: Render DEV ECS task definition
-        id: render-task-definition
-        uses: aws-actions/amazon-ecs-render-task-definition@c804dfbdd57f713b6c079302a4c01db7017a36fc
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ vars.ECS_CONTAINER_NAME }}
-          image: ${{ needs.build-scan-push.outputs.image_uri }}
-          environment-variables: |
-            BUILD_TAG=${{ github.sha }}
-
-      - name: Deploy to DEV ECS service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@df9643053eda01f169e64a0e60233aacca83799a
-        with:
-          task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
-          service: ${{ vars.ECS_SERVICE_NAME }}
-          cluster: ${{ vars.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: true
-
-      - name: Smoke test DEV service
-        run: |
-          set -euo pipefail
-
-          APP_BASE_URL="${{ vars.APP_BASE_URL }}"
-          APP_BASE_URL="${APP_BASE_URL%/}"
-
-          echo "Testing /health"
-          curl -fsS "${APP_BASE_URL}/health"
-
-          echo "Testing /db-health"
-          curl -fsS "${APP_BASE_URL}/db-health"
-
-      - name: Print DEV ECS diagnostics on failure
-        if: failure()
-        run: |
-          aws ecs describe-services \
-            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
-            --services "${{ vars.ECS_SERVICE_NAME }}" \
-            --query "services[0].{status:status,desired:desiredCount,running:runningCount,pending:pendingCount,taskDefinition:taskDefinition,events:events[0:10]}" \
-            --output table
+    with:
+      environment_name: dev
+      image_uri: ${{ needs.build-scan-push.outputs.image_uri }}
+      build_tag: ${{ github.sha }}
 
   # ============================================================
   # QA / PROD: PROMOTE EXISTING ARTIFACT
@@ -373,92 +295,17 @@ jobs:
 
   deploy-promoted:
     name: Deploy promoted image
-    runs-on: ubuntu-24.04
 
-    needs: promote-image
-
-    environment:
-      name: ${{ needs.promote-image.outputs.target_environment }}
+    needs:
+      - promote-image
 
     permissions:
       id-token: write
       contents: read
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+    uses: ./.github/workflows/resuable-ecs-deploy.yml
 
-      - name: Configure AWS credentials for deployment
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Export current ECS task definition
-        run: |
-          set -euo pipefail
-
-          CURRENT_TASK_DEF_ARN=$(aws ecs describe-services \
-            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
-            --services "${{ vars.ECS_SERVICE_NAME }}" \
-            --region "${{ vars.AWS_REGION }}" \
-            --query "services[0].taskDefinition" \
-            --output text)
-
-          echo "Current task definition: ${CURRENT_TASK_DEF_ARN}"
-
-          aws ecs describe-task-definition \
-            --task-definition "${CURRENT_TASK_DEF_ARN}" \
-            --region "${{ vars.AWS_REGION }}" \
-            --query "taskDefinition" \
-            --output json > task-definition-full.json
-
-          jq 'del(
-            .taskDefinitionArn,
-            .revision,
-            .status,
-            .requiresAttributes,
-            .compatibilities,
-            .registeredAt,
-            .registeredBy
-          )' task-definition-full.json > task-definition.json
-
-      - name: Render promoted ECS task definition
-        id: render-task-definition
-        uses: aws-actions/amazon-ecs-render-task-definition@c804dfbdd57f713b6c079302a4c01db7017a36fc
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ vars.ECS_CONTAINER_NAME }}
-          image: ${{ needs.promote-image.outputs.image_uri }}
-          environment-variables: |
-            BUILD_TAG=${{ needs.promote-image.outputs.target_sha }}
-
-      - name: Deploy promoted image to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@df9643053eda01f169e64a0e60233aacca83799a
-        with:
-          task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
-          service: ${{ vars.ECS_SERVICE_NAME }}
-          cluster: ${{ vars.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: true
-
-      - name: Smoke test promoted service
-        run: |
-          set -euo pipefail
-
-          APP_BASE_URL="${{ vars.APP_BASE_URL }}"
-          APP_BASE_URL="${APP_BASE_URL%/}"
-
-          echo "Testing /health"
-          curl -fsS "${APP_BASE_URL}/health"
-
-          echo "Testing /db-health"
-          curl -fsS "${APP_BASE_URL}/db-health"
-
-      - name: Print ECS diagnostics on failure
-        if: failure()
-        run: |
-          aws ecs describe-services \
-            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
-            --services "${{ vars.ECS_SERVICE_NAME }}" \
-            --query "services[0].{status:status,desired:desiredCount,running:runningCount,pending:pendingCount,taskDefinition:taskDefinition,events:events[0:10]}" \
-            --output table
+    with:
+      environment_name: ${{ needs.promote-image.outputs.target_environment }}
+      image_uri: ${{ needs.promote-image.outputs.image_uri }}
+      build_tag: ${{ needs.promote-image.outputs.target_sha }}
