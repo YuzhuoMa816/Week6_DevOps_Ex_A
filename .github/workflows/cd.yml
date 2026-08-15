@@ -1,0 +1,464 @@
+name: CD
+
+on:
+  push:
+    branches:
+      - dev
+
+  pull_request:
+    types:
+      - closed
+    branches:
+      - qa
+      - prod
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================================
+  # DEV: BUILD ONCE
+  # ============================================================
+
+  build-scan-push:
+    name: Build, scan and push image
+    if: github.event_name == 'push' && github.ref_name == 'dev'
+    runs-on: ubuntu-24.04
+
+    environment: dev
+
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      image_uri: ${{ steps.push-image.outputs.image_uri }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Configure AWS credentials for build
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          role-to-assume: ${{ secrets.AWS_BUILD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build app image for linux/amd64
+        run: |
+          docker buildx build \
+            --pull \
+            --platform linux/amd64 \
+            --load \
+            -t week6-devops-prac:${{ github.sha }} \
+            .
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          scan-type: image
+          image-ref: week6-devops-prac:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Login to ECR
+        run: |
+          set -euo pipefail
+
+          ECR_REPOSITORY_URL="$(printf '%s' '${{ vars.ECR_REPOSITORY_URL }}' | tr -d '\r\n' | xargs)"
+          ECR_REGISTRY="${ECR_REPOSITORY_URL%%/*}"
+
+          aws ecr get-login-password \
+            --region "${{ vars.AWS_REGION }}" \
+            | docker login \
+                --username AWS \
+                --password-stdin "${ECR_REGISTRY}"
+
+      - name: Push image to ECR
+        id: push-image
+        run: |
+          set -euo pipefail
+
+          IMAGE_TAG="${{ github.sha }}"
+          ECR_REPOSITORY_URL="$(printf '%s' '${{ vars.ECR_REPOSITORY_URL }}' | tr -d '\r\n' | xargs)"
+          IMAGE_URI="${ECR_REPOSITORY_URL}:${IMAGE_TAG}"
+
+          echo "Pushing image: ${IMAGE_URI}"
+
+          docker tag \
+            "week6-devops-prac:${IMAGE_TAG}" \
+            "${IMAGE_URI}"
+
+          docker push "${IMAGE_URI}"
+
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+  # ============================================================
+  # DEV: DEPLOY
+  # ============================================================
+
+  deploy-dev:
+    name: Deploy image to DEV
+    if: github.event_name == 'push' && github.ref_name == 'dev'
+    runs-on: ubuntu-24.04
+
+    needs: build-scan-push
+    environment: dev
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Configure AWS credentials for DEV deployment
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Export current ECS task definition
+        run: |
+          set -euo pipefail
+
+          CURRENT_TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
+            --services "${{ vars.ECS_SERVICE_NAME }}" \
+            --region "${{ vars.AWS_REGION }}" \
+            --query "services[0].taskDefinition" \
+            --output text)
+
+          echo "Current task definition: ${CURRENT_TASK_DEF_ARN}"
+
+          aws ecs describe-task-definition \
+            --task-definition "${CURRENT_TASK_DEF_ARN}" \
+            --region "${{ vars.AWS_REGION }}" \
+            --query "taskDefinition" \
+            --output json > task-definition-full.json
+
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' task-definition-full.json > task-definition.json
+
+      - name: Render DEV ECS task definition
+        id: render-task-definition
+        uses: aws-actions/amazon-ecs-render-task-definition@c804dfbdd57f713b6c079302a4c01db7017a36fc
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ vars.ECS_CONTAINER_NAME }}
+          image: ${{ needs.build-scan-push.outputs.image_uri }}
+          environment-variables: |
+            BUILD_TAG=${{ github.sha }}
+
+      - name: Deploy to DEV ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@df9643053eda01f169e64a0e60233aacca83799a
+        with:
+          task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
+          service: ${{ vars.ECS_SERVICE_NAME }}
+          cluster: ${{ vars.ECS_CLUSTER_NAME }}
+          wait-for-service-stability: true
+
+      - name: Smoke test DEV service
+        run: |
+          set -euo pipefail
+
+          APP_BASE_URL="${{ vars.APP_BASE_URL }}"
+          APP_BASE_URL="${APP_BASE_URL%/}"
+
+          echo "Testing /health"
+          curl -fsS "${APP_BASE_URL}/health"
+
+          echo "Testing /db-health"
+          curl -fsS "${APP_BASE_URL}/db-health"
+
+      - name: Print DEV ECS diagnostics on failure
+        if: failure()
+        run: |
+          aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
+            --services "${{ vars.ECS_SERVICE_NAME }}" \
+            --query "services[0].{status:status,desired:desiredCount,running:runningCount,pending:pendingCount,taskDefinition:taskDefinition,events:events[0:10]}" \
+            --output table
+
+  # ============================================================
+  # QA / PROD: PROMOTE EXISTING ARTIFACT
+  # ============================================================
+
+  promote-image:
+    name: Promote existing image
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        (github.head_ref == 'dev' && github.base_ref == 'qa') ||
+        (github.head_ref == 'qa' && github.base_ref == 'prod')
+      )
+
+    runs-on: ubuntu-24.04
+
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      image_uri: ${{ steps.verify.outputs.image_uri }}
+      artifact_digest: ${{ steps.source-image.outputs.digest }}
+      target_sha: ${{ steps.promotion.outputs.target_sha }}
+      target_environment: ${{ steps.promotion.outputs.target_branch }}
+
+    steps:
+      - name: Configure AWS credentials for artifact promotion
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          role-to-assume: ${{ vars.AWS_PROMOTION_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Resolve promotion metadata
+        id: promotion
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref }}
+          TARGET_BRANCH: ${{ github.base_ref }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          echo "source_branch=${SOURCE_BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "target_branch=${TARGET_BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "target_sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"
+
+          echo "Promoting ${SOURCE_BRANCH} -> ${TARGET_BRANCH}"
+          echo "Source SHA: ${SOURCE_SHA}"
+          echo "Target SHA: ${TARGET_SHA}"
+
+      - name: Resolve ECR repository
+        id: ecr
+        run: |
+          set -euo pipefail
+
+          ECR_REPOSITORY_URL="$(printf '%s' '${{ vars.ECR_REPOSITORY_URL }}' | tr -d '\r\n' | xargs)"
+          ECR_REPOSITORY_NAME="${ECR_REPOSITORY_URL#*/}"
+
+          echo "repository_url=${ECR_REPOSITORY_URL}" >> "$GITHUB_OUTPUT"
+          echo "repository_name=${ECR_REPOSITORY_NAME}" >> "$GITHUB_OUTPUT"
+
+          echo "Repository: ${ECR_REPOSITORY_NAME}"
+
+      - name: Find source image in ECR
+        id: source-image
+        run: |
+          set -euo pipefail
+
+          SOURCE_SHA="${{ steps.promotion.outputs.source_sha }}"
+          REPOSITORY="${{ steps.ecr.outputs.repository_name }}"
+
+          RESPONSE=$(aws ecr batch-get-image \
+            --repository-name "${REPOSITORY}" \
+            --image-ids imageTag="${SOURCE_SHA}" \
+            --output json)
+
+          MANIFEST=$(echo "${RESPONSE}" \
+            | jq -r '.images[0].imageManifest // empty')
+
+          DIGEST=$(echo "${RESPONSE}" \
+            | jq -r '.images[0].imageId.imageDigest // empty')
+
+          if [ -z "${MANIFEST}" ] || [ -z "${DIGEST}" ]; then
+            echo "ERROR: Source artifact ${SOURCE_SHA} does not exist in ECR."
+            exit 1
+          fi
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+          printf '%s' "${MANIFEST}" > image-manifest.json
+
+          echo "Found source artifact"
+          echo "Source SHA: ${SOURCE_SHA}"
+          echo "Digest: ${DIGEST}"
+
+      - name: Promote image tag
+        run: |
+          set -euo pipefail
+
+          TARGET_SHA="${{ steps.promotion.outputs.target_sha }}"
+          SOURCE_DIGEST="${{ steps.source-image.outputs.digest }}"
+          REPOSITORY="${{ steps.ecr.outputs.repository_name }}"
+
+          TARGET_RESPONSE=$(aws ecr batch-get-image \
+            --repository-name "${REPOSITORY}" \
+            --image-ids imageTag="${TARGET_SHA}" \
+            --output json)
+
+          EXISTING_TARGET_DIGEST=$(echo "${TARGET_RESPONSE}" \
+            | jq -r '.images[0].imageId.imageDigest // empty')
+
+          if [ -n "${EXISTING_TARGET_DIGEST}" ]; then
+
+            echo "Target tag ${TARGET_SHA} already exists."
+            echo "Existing digest: ${EXISTING_TARGET_DIGEST}"
+
+            if [ "${EXISTING_TARGET_DIGEST}" != "${SOURCE_DIGEST}" ]; then
+              echo "ERROR: Existing target tag points to a different artifact."
+              exit 1
+            fi
+
+            echo "Existing target tag already points to the correct artifact."
+
+          else
+
+            MANIFEST=$(cat image-manifest.json)
+
+            echo "Creating promotion tag ${TARGET_SHA}"
+
+            aws ecr put-image \
+              --repository-name "${REPOSITORY}" \
+              --image-tag "${TARGET_SHA}" \
+              --image-manifest "${MANIFEST}" \
+              > /dev/null
+
+          fi
+
+      - name: Verify promoted image digest
+        id: verify
+        run: |
+          set -euo pipefail
+
+          TARGET_SHA="${{ steps.promotion.outputs.target_sha }}"
+          SOURCE_DIGEST="${{ steps.source-image.outputs.digest }}"
+          REPOSITORY="${{ steps.ecr.outputs.repository_name }}"
+          ECR_REPOSITORY_URL="${{ steps.ecr.outputs.repository_url }}"
+
+          TARGET_DIGEST=$(aws ecr describe-images \
+            --repository-name "${REPOSITORY}" \
+            --image-ids imageTag="${TARGET_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+
+          echo "Source digest: ${SOURCE_DIGEST}"
+          echo "Target digest: ${TARGET_DIGEST}"
+
+          if [ "${SOURCE_DIGEST}" != "${TARGET_DIGEST}" ]; then
+            echo "ERROR: Artifact digest changed during promotion."
+            exit 1
+          fi
+
+          IMAGE_URI="${ECR_REPOSITORY_URL}@${TARGET_DIGEST}"
+
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+          echo "Artifact promotion verified successfully."
+          echo "Deployable image: ${IMAGE_URI}"
+
+  # ============================================================
+  # QA / PROD: DEPLOY PROMOTED ARTIFACT
+  # ============================================================
+
+  deploy-promoted:
+    name: Deploy promoted image
+    runs-on: ubuntu-24.04
+
+    needs: promote-image
+
+    environment:
+      name: ${{ needs.promote-image.outputs.target_environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Configure AWS credentials for deployment
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Export current ECS task definition
+        run: |
+          set -euo pipefail
+
+          CURRENT_TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
+            --services "${{ vars.ECS_SERVICE_NAME }}" \
+            --region "${{ vars.AWS_REGION }}" \
+            --query "services[0].taskDefinition" \
+            --output text)
+
+          echo "Current task definition: ${CURRENT_TASK_DEF_ARN}"
+
+          aws ecs describe-task-definition \
+            --task-definition "${CURRENT_TASK_DEF_ARN}" \
+            --region "${{ vars.AWS_REGION }}" \
+            --query "taskDefinition" \
+            --output json > task-definition-full.json
+
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' task-definition-full.json > task-definition.json
+
+      - name: Render promoted ECS task definition
+        id: render-task-definition
+        uses: aws-actions/amazon-ecs-render-task-definition@c804dfbdd57f713b6c079302a4c01db7017a36fc
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ vars.ECS_CONTAINER_NAME }}
+          image: ${{ needs.promote-image.outputs.image_uri }}
+          environment-variables: |
+            BUILD_TAG=${{ needs.promote-image.outputs.target_sha }}
+
+      - name: Deploy promoted image to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@df9643053eda01f169e64a0e60233aacca83799a
+        with:
+          task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
+          service: ${{ vars.ECS_SERVICE_NAME }}
+          cluster: ${{ vars.ECS_CLUSTER_NAME }}
+          wait-for-service-stability: true
+
+      - name: Smoke test promoted service
+        run: |
+          set -euo pipefail
+
+          APP_BASE_URL="${{ vars.APP_BASE_URL }}"
+          APP_BASE_URL="${APP_BASE_URL%/}"
+
+          echo "Testing /health"
+          curl -fsS "${APP_BASE_URL}/health"
+
+          echo "Testing /db-health"
+          curl -fsS "${APP_BASE_URL}/db-health"
+
+      - name: Print ECS diagnostics on failure
+        if: failure()
+        run: |
+          aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
+            --services "${{ vars.ECS_SERVICE_NAME }}" \
+            --query "services[0].{status:status,desired:desiredCount,running:runningCount,pending:pendingCount,taskDefinition:taskDefinition,events:events[0:10]}" \
+            --output table
