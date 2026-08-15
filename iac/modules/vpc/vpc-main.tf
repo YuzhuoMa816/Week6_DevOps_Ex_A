@@ -1,7 +1,19 @@
+# This module creates a basic AWS VPC network structure.
+# It includes:
+# - one VPC
+# - public and private subnets
+# - an internet gateway for public access
+# - a NAT gateway so private subnets can reach the internet securely
+# - route tables to control traffic between subnets and the internet
+
+# This data source gets the available AWS availability zones in the current region.
+# We use it so the subnets can be spread across different zones for better resilience.
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
+# Create the main VPC.
+# The CIDR block is passed in from a variable, so the network size can be changed easily.
 resource "aws_vpc" "this" {
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
@@ -13,6 +25,8 @@ resource "aws_vpc" "this" {
   }
 }
 
+# Create public subnets.
+# Public subnets are used for resources that need direct internet access, such as load balancers.
 resource "aws_subnet" "public_subnet" {
   count = length(var.public_subnet_cidrs)
 
@@ -27,6 +41,8 @@ resource "aws_subnet" "public_subnet" {
   }
 }
 
+# Create private subnets.
+# Private subnets are used for resources that should not be exposed directly to the internet.
 resource "aws_subnet" "private_subnet" {
   count = length(var.private_subnet_cidrs)
 
@@ -41,7 +57,8 @@ resource "aws_subnet" "private_subnet" {
   }
 }
 
-
+# Create an internet gateway.
+# This allows resources in the public subnets to access the internet.
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
 
@@ -51,6 +68,8 @@ resource "aws_internet_gateway" "this" {
   }
 }
 
+# Create a route table for public subnets.
+# The route 0.0.0.0/0 sends all outbound traffic to the internet gateway.
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.this.id
 
@@ -65,6 +84,7 @@ resource "aws_route_table" "public" {
   }
 }
 
+# Associate each public subnet with the public route table.
 resource "aws_route_table_association" "public" {
   count = length(aws_subnet.public_subnet)
 
@@ -72,8 +92,8 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-
-# NAT Gateway for private subnet
+# Create an Elastic IP for the NAT gateway.
+# NAT gateways need a public IP so they can forward traffic from private subnets to the internet.
 resource "aws_eip" "nat" {
   domain = "vpc"
 
@@ -83,10 +103,10 @@ resource "aws_eip" "nat" {
     Name        = "${var.project_name}-${var.environment}-nat-eip"
     Environment = var.environment
   }
-
-
 }
 
+# Create a NAT gateway in the first public subnet.
+# This gives private subnets outbound internet access without exposing them directly.
 resource "aws_nat_gateway" "this" {
   allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.public_subnet[0].id
@@ -99,8 +119,8 @@ resource "aws_nat_gateway" "this" {
   depends_on = [aws_internet_gateway.this]
 }
 
-
-
+# Create a route table for private subnets.
+# All traffic to the internet is sent through the NAT gateway.
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
 
@@ -114,6 +134,8 @@ resource "aws_route_table" "private" {
     Environment = var.environment
   }
 }
+
+# Associate each private subnet with the private route table.
 resource "aws_route_table_association" "private" {
   count = length(aws_subnet.private_subnet)
 
